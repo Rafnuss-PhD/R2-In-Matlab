@@ -47,8 +47,11 @@ if d.job_type == 1 % inverse solution
             % Jacobian Matrix
             data=dlmread([d.filepath dataset '_J.dat']);
             J = data(2:end,:)';
-            % output.J=reshape( J(J(:)~=0), n_parm, n_obs);
-            output.J=reshape( J, n_parm, n_obs);
+            if numel(J)== n_parm * n_obs
+                output.J=reshape( J, n_parm, n_obs);
+            else
+                output.J=reshape( J(J(:)~=0), n_parm, n_obs);
+            end
             %imagesc(output.J)
             
             % Roughness matrix m-m_ref
@@ -84,8 +87,14 @@ if d.job_type == 1 % inverse solution
             
             output.Res = (sens + alpha * output.R)^(-1) * sens;
 
+            % Compute the zone inside, that is removing the buffer zone
+            output.inside=false( d.numnp_y-1, d.numnp_x-1);
+            dx = (d.numnp_x-1-d.grid.nx)/2 +1;
+            output.inside( 1:d.grid.ny, dx:end-dx+1) = true;
             
         catch
+            warning('Not reading the jacobien, ressolution... matrices')
+            keyboard;
             output.sen=NaN;
             output.J=NaN;
             output.R=NaN;
