@@ -286,5 +286,5 @@ elec.k=k(idx);
 
 
 elec.pseudo_x       = interp1(1:elec.n,elec.x,elec.pos(:,1));
-elec.pseudo_y       = interp1(1:elec.n,elec.x,elec.pos(:,2));
+elec.pseudo_y       = elec.pos(:,2)*(elec.x(2)-elec.x(1));
 end

@@ -20,8 +20,6 @@ function [filename, grid_gen, K_true, phi_true, sigma_true, K, sigma, Sigma, gen
 %   * Rho.grid_gen.ny           = 60; % log-spaced grid_gen.
 %   * Rho.elec.spacing      = 2; % in grid_gen spacing unit.
 %   * Rho.elec.config_max   = 6000; % number of configuration of electrode maximal
-%   * Rho.dmin.res_matrix   = 1; % resolution matrix: 1-'sensitivity' matrix, 2-true resolution matrix or 0-none
-%   * Rho.dmin.tolerance    = 1;
 %   * Rho.method          = 'R2';
 % OTHER
 %   * plotit              = false;      % display graphic or not (you can still display later with |script_plot.m|)
@@ -47,14 +45,6 @@ if ~isfield(gen, 'samp'); gen.samp = 2; end
 if ~isfield(gen, 'samp_n'); gen.samp_n = 1/100 * (2^gen.sx+1)*(2^gen.sy+1); end
 if ~isfield(gen, 'mu'); gen.mu = 0; end
 if ~isfield(gen, 'std'); gen.std = 1; end
-% Inversion for secondary variable
-if ~isfield(gen, 'Rho') || ~isfield(gen.Rho, 'method'); gen.Rho.method = 'R2'; end
-if ~isfield(gen, 'Rho') || ~isfield(gen.Rho, 'grid_gen') || ~isfield(gen.Rho.grid_gen, 'nx'); gen.Rho.grid_gen.nx = 300; end
-if ~isfield(gen, 'Rho') || ~isfield(gen.Rho, 'grid_gen') || ~isfield(gen.Rho.grid_gen, 'ny'); gen.Rho.grid_gen.nx = 60; end
-if ~isfield(gen, 'Rho') || ~isfield(gen.Rho, 'elec') || ~isfield(gen.Rho.elec, 'spacing'); gen.Rho.elec.spacing = 2; end
-if ~isfield(gen, 'Rho') || ~isfield(gen.Rho, 'elec') || ~isfield(gen.Rho.elec, 'config_max'); gen.Rho.elec.config_max = 6000; end
-if ~isfield(gen, 'Rho') || ~isfield(gen.Rho, 'dmin') || ~isfield(gen.Rho.dmin, 'res_matrix'); gen.Rho.dmin.res_matrix = 1; end
-if ~isfield(gen, 'Rho') || ~isfield(gen.Rho, 'dmin') || ~isfield(gen.Rho.dmin, 'tolerance'); gen.Rho.dmin.tolerance = 1; end
 % Other
 if ~isfield(gen, 'plotit'); gen.plotit = 0; end
 if ~isfield(gen, 'saveit'); gen.saveit = 1; end
@@ -88,7 +78,7 @@ f_Archie_inv    = @(sigma)  (sigma/43).^(1/1.4) ;  % \sigma = \sigma_W \phi ^m  
 
 f_Kozeny        = @(phi,d)  d^2/180*phi^3/(1-phi)^2;
 f_Kozeny        = @(K,d)    roots([-d^2/180/K 1 -2 1]);
-f_KC            = @(phi,d10) 9810/0.001002 * phi.^3./(1-phi).^2 .* d10^2/180; % Kozeny-Carman @20Â°C
+f_KC            = @(phi,d10) 9810/0.001002 * phi.^3./(1-phi).^2 .* d10^2/180; % Kozeny-Carman @20°C
 
 %% * 3. *Generate field*
 switch gen.method
@@ -164,33 +154,40 @@ if gen.plotit
 end
 
 %%
-addpath data_gen/R2
-filepath       = 'data_gen/data/IO-file/';
+filepath       = 'data_gen/IO-file/';
 delete([filepath '*']);
 
-i = gen.Rho.i;
-f = gen.Rho.f;
-
 % Forward Grid
-cell2vertex         = @(x) [x(1)-(x(2)-x(1))/2  x(1:end-1)+diff(x)/2  x(end)+(x(end)-x(end-1))/2];
+f = gen.Rho.f;
 f.grid.x            = grid_gen.x;
 f.grid.y            = grid_gen.y;
+cell2vertex         = @(x) [x(1)-(x(2)-x(1))/2  x(1:end-1)+diff(x)/2  x(end)+(x(end)-x(end-1))/2];
 f.grid.x_n          = cell2vertex(f.grid.x);
 f.grid.y_n          = cell2vertex(f.grid.y);
-% i.grid.nx         = 300;
-% i.grid.nx         = 30;
 
 % Electrod config
-elec = gen.Rho.elec;
-% elec.spacing      = 2; % in grid_Rho.dx unit
-elec.x              = f.grid.x_n(1:elec.spacing:end);
+elec                = gen.Rho.elec;
+[~,min_spacing]     = min(abs(f.grid.x-elec.spacing));
+elec.spacing        = f.grid.x(min_spacing);
+f.elec_spacing   = min_spacing-1;
+f.elec_id           = f.elec_spacing*(elec.bufzone)+1 : f.elec_spacing : numel(f.grid.x_n)-elec.bufzone*f.elec_spacing;
+elec.x              = f.grid.x_n(f.elec_id);
 elec.n              = numel(elec.x);
+
 % elec.config_max   = 3000;
 elec.method         = 'dipole-dipole';
 elec.depth_max      = ceil(elec.n*f.grid.y(end)/f.grid.x(end));
 elec.selection      = 5; %1: k-mean, 2:iterative removal of the closest neighboohood 3:iterative removal of the averaged closest point 4:voronoi 5:random
 elec                = config_elec(elec); % create the data configuration.
-gen.Rho.elec        = elec; % put the elec struct in the dmin
+
+% Inverse Grid
+i = gen.Rho.i;
+i.elec_spacing           = floor(i.grid.nx/(elec.n+2*elec.bufzone-1));
+i.grid.x_n          = f.grid.x_n(1:f.elec_spacing/i.elec_spacing:end);
+i.grid.x            = i.grid.x_n(1:end-1)+diff(i.grid.x_n)/2;
+i.grid.y_n          = logspace(log10(f.grid.y_n(1)+5),log10(f.grid.y_n(end)+5),i.grid.ny+1)-5; % cell center
+i.grid.y            = i.grid.y_n(1:end-1)+diff(i.grid.y_n)/2;
+i.elec_id           = find(sum(bsxfun(@eq,i.grid.x_n',elec.x),2));
 
 % Forward
 f.header            = 'Forward';  % title of up to 80 characters
@@ -202,7 +199,7 @@ f.alpha_aniso       = gen.covar.range0(2)/gen.covar.range0(1);
 % Rho value
 % f                  = griddedInterpolant({grid.y,grid.x},rho_true,'nearest','nearest');
 f.rho               = rho_true; % f({grid_Rho.y,grid_Rho.x});
-% f.dmin.filename       = 'gtrue.dat';
+% f.filename       = 'gtrue.dat';
 f.num_regions       = 1+numel(f.rho);
 f.rho_min           = min(rho_true(:));
 f.rho_avg           = mean(rho_true(:));
@@ -228,13 +225,6 @@ for u=2:size(A2,1)
 end
 fclose(fid);
 
-% Inverse Grid
-elec.spacing = floor(i.grid.nx/(elec.n-1));
-i.grid.x_n = elec.x(1): diff(elec.x(1:2))/elec.spacing :elec.x(end);
-i.grid.x = i.grid.x_n(1:end-1)+diff(i.grid.x_n)/2;
-
-i.grid.y_n = logspace(log10(f.grid.y_n(1)+5),log10(f.grid.y_n(end)+5),i.grid.ny+1)-5; % cell center
-i.grid.y = i.grid.y_n(1:end-1)+diff(i.grid.y_n)/2;
 
 if 0==1
     figure(4); clf; hold on;
@@ -262,45 +252,36 @@ i.tolerance         = 1;
 i.rho_avg           = f.rho_avg;
 i                   = Matlat2R2(i,elec);
 
-%% Ouput
-Rho.d           = flipud(i.output.res);
-Sigma.d         = 1000./Rho.d;
+%% Ouput Sigma
+Sigma.d             = 1000./flipud(i.output.res);
 
 if i.res_matrix ==  1 && any(~isnan(i.output.sen(:)))
-    Rho.sen_raw         = flipud(i.output.sen);
-    Sigma.sen_raw       = 1000./Rho.sen_raw;
-    f                   = griddedInterpolant({grid_Rho.y,grid_Rho.x},Sigma.sen_raw,'nearest','nearest');
-    % f                   = griddedInterpolant({gen.Rho.grid.y,gen.Rho.grid.x},Sigma.sen_raw,'nearest','nearest');
-    Sigma.sen           = f({grid.y,grid.x});
-    % Sigma.sen           = f({grid_gen.y,grid_gen.x});
-    
+    Sigma.sen       = 1000./flipud(i.output.sen);
 elseif i.res_matrix ==  2 && any(~isnan(i.output.rad(:)))
-    Sigma.rad_raw       = flipud(i.output.rad);
-    f                   = griddedInterpolant({grid_Rho.y,grid_Rho.x},Sigma.rad_raw,'nearest','nearest');
-    Sigma.rad           = f({grid.y,grid.x});
+    Sigma.rad       = flipud(i.output.rad);
 elseif i.res_matrix ==  3 && any(~isnan(i.output.Res(:)))
-    inside=false( numel(i.yy)-1, numel(i.xx)-1);
-    dx = (numel(i.xx)-1-i.grid.nx)/2 +1;
-    inside( 1:i.grid.ny, dx:end-dx+1) = true;
-    
+
     Sigma.res=i.output.Res;
-    Sigma.res(~inside,:)=[]; Sigma.res(:,~inside(:))=[];
+    Sigma.res(~i.output.inside,:)=[]; Sigma.res(:,~i.output.inside(:))=[];
     Sigma.res_out=i.output.Res;
-    Sigma.res_out(~inside,:)=[]; Sigma.res_out(:,inside(:))=[];
+    Sigma.res_out(~i.output.inside,:)=[]; Sigma.res_out(:,i.output.inside(:))=[];
     Sigma.res_out = sum(Sigma.res_out,2);
     
 end
-
 rmpath data_gen/R2
 Sigma.x = i.grid.x;
 Sigma.y = i.grid.y;
 [Sigma.X,Sigma.Y] = meshgrid(Sigma.x, Sigma.y);
 
+gen.Rho.i           = i;
+gen.Rho.f           = f;
+gen.Rho.elec        = elec;
+
 %% * 4.*SAVING*
 
 if gen.saveit
     filename = ['data_gen/data/GEN-', gen.name ,'_', datestr(now,'yyyy-mm-dd_HH-MM'), '.mat'];
-    save(filename, 'phi_true', 'sigma_true', 'sigma', 'Sigma','grid_gen', 'gen')
+    save(filename, 'phi_true', 'sigma_true', 'Sigma','grid_gen', 'gen') %'sigma',
 end
 
 fprintf('  ->  finish in %g sec\n', toc)
